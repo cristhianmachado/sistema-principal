@@ -1,0 +1,2 @@
+/* Importa os tokens/tema base do design system (submódulo). */
+@import "./components/shared/src/styles.css";
