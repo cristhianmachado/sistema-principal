@@ -1,4 +1,5 @@
-name: Atualizar Submodule Automático (PR)
+name: Atualizar Submodule Design System (PR)
+
 on:
   repository_dispatch:
     types: [atualizou-componente]
@@ -14,10 +15,47 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Atualizar submodules para a última versão
-        run: git submodule update --remote --recursive
+      - name: Atualizar submodule e coletar o que mudou
+        id: diff
+        env:
+          SUBMODULE_PATH: src/components/shared
+          DS_SLUG: cristhianmachado/design-system-components
+        run: |
+          set -euo pipefail
+
+          # Pin ANTIGO: o commit que o submodule aponta hoje (gitlink, antes do update).
+          ANTIGO=$(git rev-parse ":$SUBMODULE_PATH")
+
+          # Sobe o submodule para o ultimo main e pega o pin NOVO.
+          git submodule update --remote --recursive "$SUBMODULE_PATH"
+          NOVO=$(git -C "$SUBMODULE_PATH" rev-parse HEAD)
+
+          echo "antigo=$ANTIGO" >> "$GITHUB_OUTPUT"
+          echo "novo=$NOVO" >> "$GITHUB_OUTPUT"
+
+          if [ "$ANTIGO" = "$NOVO" ]; then
+            echo "mudou=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "mudou=true" >> "$GITHUB_OUTPUT"
+
+          # Link de compare no GitHub do DS (diff visual completo).
+          echo "compare=https://github.com/$DS_SLUG/compare/$ANTIGO...$NOVO" >> "$GITHUB_OUTPUT"
+
+          # Lista de commits entre os dois pins.
+          echo "commits<<EOF" >> "$GITHUB_OUTPUT"
+          git -C "$SUBMODULE_PATH" log --no-merges --pretty=format:'- %s' "$ANTIGO..$NOVO" >> "$GITHUB_OUTPUT"
+          printf '\n' >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # Arquivos alterados (visao rapida sem abrir o compare).
+          echo "arquivos<<EOF" >> "$GITHUB_OUTPUT"
+          git -C "$SUBMODULE_PATH" diff --stat "$ANTIGO..$NOVO" >> "$GITHUB_OUTPUT"
+          printf '\n' >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Criar Pull Request
+        if: steps.diff.outputs.mudou == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.PAT_TOKEN }}
@@ -26,9 +64,20 @@ jobs:
           delete-branch: true
           title: "🔄 Atualização: design-system-components"
           body: |
-            O repositório `design-system-components` teve alterações na main.
-            
-            Esta PR atualiza a referência do submódulo para a última versão disponível.
-            
-            **Por favor, verifique se a build e os testes estão passando antes de fazer o merge.**
+            Atualização do submódulo `design-system-components` disparada manualmente.
+
+            **Motivo:** ${{ github.event.client_payload.motivo }}
+
+            **Pin:** `${{ steps.diff.outputs.antigo }}` → `${{ steps.diff.outputs.novo }}`
+            **Comparar no GitHub:** ${{ steps.diff.outputs.compare }}
+
+            ### O que mudou no DS
+            ${{ steps.diff.outputs.commits }}
+
+            ### Arquivos alterados
+            ```
+            ${{ steps.diff.outputs.arquivos }}
+            ```
+
+            **Rode a build e os testes antes do merge.**
           labels: automação, atualização
